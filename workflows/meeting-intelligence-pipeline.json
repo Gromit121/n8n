@@ -1,0 +1,439 @@
+{
+  "name": "Meeting Intelligence Pipeline",
+  "description": "Context-aware meeting transcription: Dropbox → Calendar match → Gemini transcription → SharePoint/OneDrive save → Email notification",
+  "version": "1.0.0",
+  "n8nWorkflowId": "sqDcFJCveiUNar5TwTJLA",
+  "exportedAt": "2026-02-07T15:00:00.000Z",
+  "nodes": [
+    {
+      "parameters": {
+        "resource": "event",
+        "fromAllCalendars": false,
+        "calendarId": {
+          "__rl": true,
+          "mode": "list",
+          "cachedResultName": "Calendar"
+        },
+        "limit": 20,
+        "output": "raw",
+        "filters": {
+          "custom": "={{ \n  \"start/dateTime le '\" + $json.calendarWindowEndUtc +\n  \"' and end/dateTime ge '\" + $json.calendarWindowStartUtc + \"'\"\n}}"
+        }
+      },
+      "id": "bedbef24-cca0-4c41-9fc1-e9189fd83407",
+      "name": "Find Calendar Match",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [1568, -1048]
+    },
+    {
+      "parameters": {
+        "toRecipients": "glong@compassrm.com",
+        "subject": "=Meeting Transcript Ready - {{ $('Find Calendar Match').item.json.subject }}",
+        "bodyContent": "=<h2>Meeting Transcript Processed</h2><p><strong>Meeting:</strong> {{ $('Find Calendar Match').item.json.subject }}</p><p><strong>Date:</strong> {{ $('Parse Date').item.json.parsedDate }}</p><p><strong>Project:</strong> {{ $('Select Project Row').item.json.projectName }}</p><p>Your transcript has been saved to SharePoint.</p><p><a href='{{ $('Save MD File').item.json.webUrl }}'>View Full Transcript</a></p>",
+        "additionalFields": {
+          "bodyContentType": "html"
+        }
+      },
+      "id": "4a3ee6d6-4fae-43e1-8da7-bb1bd1cfc7d2",
+      "name": "Notify Graham",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [4704, -952]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{}]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [0, -976],
+      "id": "5b4c56a6-7fb3-473a-afed-521e7dafb56d",
+      "name": "Schedule Trigger",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "download",
+        "path": "={{ $json.pathDisplay }}",
+        "binaryPropertyName": "=audio"
+      },
+      "type": "n8n-nodes-base.dropbox",
+      "typeVersion": 1,
+      "position": [672, -976],
+      "id": "831d4b85-e0ac-4e05-b30f-ab2d1510fafb",
+      "name": "Download a file",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "folder",
+        "operation": "list",
+        "path": "/Recordings/JPR",
+        "filters": {}
+      },
+      "type": "n8n-nodes-base.dropbox",
+      "typeVersion": 1,
+      "position": [224, -976],
+      "id": "cfb07b49-3a51-42e5-b377-4f3216ff82e0",
+      "name": "List a folder"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item;\n\nconst server = item.json.lastModifiedServer;\nconst client = item.json.lastModifiedClient;\n\nif (!server) {\n  throw new Error('Dropbox item missing lastModifiedServer');\n}\n\nconst serverMs = Date.parse(server);\nconst clientMs = client ? Date.parse(client) : null;\n\nconst diffMs = (clientMs !== null) ? Math.abs(serverMs - clientMs) : null;\n\nreturn {\n  ...item,\n  json: {\n    ...item.json,\n    recordedAtUtc: server,\n    recordedAtUtcSource: 'dropbox.lastModifiedServer',\n    recordedAtUtcEpochMs: serverMs,\n    timestampDiffMs_serverVsClient: diffMs,\n    timestampDiffMinutes_serverVsClient: diffMs !== null ? diffMs / 60000 : null,\n    timestampWarning: (diffMs !== null && diffMs > 5 * 60000) ? true : false,\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [896, -1048],
+      "id": "b0a8db64-cf3a-4261-b66a-d7cc7bcd9156",
+      "name": "Set Recorded At"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item;\nconst utc = item.json.recordedAtUtc;\nif (!utc) throw new Error('Missing recordedAtUtc');\n\nconst d = new Date(utc);\nconst yyyy = d.getUTCFullYear();\nconst mm = String(d.getUTCMonth() + 1).padStart(2, '0');\nconst dd = String(d.getUTCDate()).padStart(2, '0');\nconst hh = String(d.getUTCHours()).padStart(2, '0');\nconst min = String(d.getUTCMinutes()).padStart(2, '0');\n\nreturn {\n  ...item,\n  json: {\n    ...item.json,\n    parsedDate: `${yyyy}-${mm}-${dd}`,\n    parsedDateTime: `${yyyy}-${mm}-${dd} ${hh}:${min} UTC`,\n  }\n};"
+      },
+      "id": "parse-date",
+      "name": "Parse Date",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, -1048]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item;\nconst windowMinutes = 15;\n\nconst center = item.json.recordedAtUtcEpochMs ?? Date.parse(item.json.recordedAtUtc);\nif (!center) throw new Error('Missing recordedAtUtc');\n\nconst startMs = center - windowMinutes * 60 * 1000;\nconst endMs = center + windowMinutes * 60 * 1000;\n\nreturn {\n  ...item,\n  json: {\n    ...item.json,\n    calendarWindowMinutes: windowMinutes,\n    calendarWindowStartUtc: new Date(startMs).toISOString(),\n    calendarWindowEndUtc: new Date(endMs).toISOString(),\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1344, -1048],
+      "id": "4a941e37-5e27-4776-bf7b-ada8008c18c6",
+      "name": "Build Calendar Window"
+    },
+    {
+      "parameters": {
+        "url": "https://graph.microsoft.com/v1.0/me/drive/root:/n8n flows/Transcripts/projects.csv:/content",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1792, -1120],
+      "id": "b11b2d98-772d-4dd5-8653-0c174df35bdd",
+      "name": "OneDrive - Get projects.csv"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [2016, -1120],
+      "id": "43f097fe-44a6-4b39-8a8c-8e9ad54706d4",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json);\nconst category = ($('Find Calendar Match').item.json.categories?.[0] ?? '').trim();\n\nconst activeRows = rows.filter(r => String(r.active ?? 'TRUE').toLowerCase() !== 'false');\nconst fallback = activeRows.find(r => r.outlookCategory === '__PERSONAL__') || null;\nconst match = category\n  ? (activeRows.find(r => r.outlookCategory === category) || fallback)\n  : fallback;\n\nif (!match) throw new Error(`No matching row and no __PERSONAL__ fallback. category=\"${category}\"`);\n\n// Build upload base URL\nconst defaultUploadBase = 'https://graph.microsoft.com/v1.0/me/drive/root:/n8n flows/Transcripts/Personal_Transcripts_Out';\nlet uploadBaseUrl;\n\nif (match.sharePointSitePath) {\n  // SharePoint format: sites/{hostname}:/{sitePath}:/drive/root:/{folderPath}\n  const sitePath = match.sharePointSitePath.replace(/^\\/+/, '').replace(/\\/+$/, '');\n  const folderPath = (match.folderPath || '').replace(/^\\/+/, '').replace(/\\/+$/, '');\n  uploadBaseUrl = `https://graph.microsoft.com/v1.0/sites/compassrm.sharepoint.com:/${sitePath}:/drive/root:/${folderPath}`;\n} else {\n  uploadBaseUrl = defaultUploadBase;\n}\n\nreturn [{\n  json: {\n    ...match,\n    matchedCategory: category,\n    routingStatus: match.outlookCategory === category ? 'matched' : 'fallback',\n    uploadBaseUrl,\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2240, -1120],
+      "id": "53d2df6f-b553-449f-b3b2-d64ac713447e",
+      "name": "Select Project Row"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://graph.microsoft.com/v1.0/me/drive/root:\" + $json.promptFilePath + \":/content\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [2464, -1216],
+      "id": "03191d65-09ad-48d4-8d55-237a8c40cdb3",
+      "name": "OneDrive - Get prompt",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item;\n\nconst raw = item.json.data ?? '';\nif (item.json.error || !item.json.data) {\n  return { ...item, json: { ...item.json, promptText: '', promptAvailable: false } };\n}\n\nlet promptText = String(raw)\n  .replace(/\\\\r\\\\n/g, '\\n')\n  .replace(/\\\\n/g, '\\n')\n  .replace(/\\r\\n/g, '\\n')\n  .trim();\n\nconst json = { ...item.json, promptText, promptAvailable: true };\ndelete json.data;\n\nreturn { ...item, json };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2688, -1216],
+      "id": "fe280b9b-8329-470a-8934-363ed09701b4",
+      "name": "Normalize Prompt Text"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://graph.microsoft.com/v1.0/me/drive/root:\" + $json.contextFilePath + \":/content\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [2464, -1024],
+      "id": "98b1c608-1284-4681-b08f-b3de6ec64820",
+      "name": "OneDrive get context",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item;\n\nconst raw = item.json.data ?? item.json.error ?? '';\nif (item.json.error || !item.json.data) {\n  return { ...item, json: { ...item.json, contextText: '', contextAvailable: false } };\n}\n\nlet contextText = String(raw)\n  .replace(/\\\\r\\\\n/g, '\\n')\n  .replace(/\\\\n/g, '\\n')\n  .replace(/\\r\\n/g, '\\n')\n  .trim();\n\nconst json = { ...item.json, contextText, contextAvailable: true };\ndelete json.data;\n\nreturn { ...item, json };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2688, -1024],
+      "id": "1198828b-5ec4-4d8c-9bd5-b7eeed74b2b4",
+      "name": "Normalize Context Text"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item;\n\nconst binary = item.binary?.audio;\nif (!binary) throw new Error('Missing item.binary.audio');\n\nconst buf = await this.helpers.getBinaryDataBuffer(0, 'audio');\nconst audioBase64 = buf.toString('base64');\n\nreturn {\n  json: {\n    ...item.json,\n    audioMimeType: binary.mimeType || 'audio/mp4',\n    audioBase64,\n    audioBase64Len: audioBase64.length,\n  },\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2688, -736],
+      "id": "1ffc838f-1d3c-4294-b881-47585a99193d",
+      "name": "Convert audio binary to base64"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 4,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [2912, -984],
+      "id": "00592b99-7199-49db-b330-5bb095490c55",
+      "name": "Merge for Transcript Contextification"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const j = $input.item.json;\n\nconst norm = (v) => {\n  if (v === null || v === undefined) return '';\n  return String(v).replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n').trim();\n};\n\nconst subject = norm(j.subject) || '(no subject)';\nconst startUtc = j.start?.dateTime ? String(j.start.dateTime) : '';\nconst endUtc   = j.end?.dateTime ? String(j.end.dateTime) : '';\nconst categories = Array.isArray(j.categories)\n  ? j.categories.map(c => String(c).trim()).filter(Boolean).join(', ')\n  : (j.categories ? String(j.categories) : '');\nconst attendees = Array.isArray(j.attendees)\n  ? j.attendees.map(a => a?.emailAddress?.name || a?.emailAddress?.address).filter(Boolean).join(', ')\n  : '[unknown]';\n\nconst filePrompt = norm(j.promptText);\nconst defaultPrompt = `Transcribe this meeting audio accurately and completely. Output a clean, readable transcript in markdown format.\n\nRules:\n- Identify speakers by name using the attendees list and context provided. If a speaker cannot be identified, use Speaker 1, Speaker 2, etc.\n- Include timestamps at natural breaks (every few minutes or at topic changes)\n- Preserve the natural flow of conversation including false starts and corrections\n- Mark unclear or inaudible sections as [inaudible]\n- Do not summarize, analyze, or editorialize — just transcribe what was said\n- Use proper nouns, names, and terminology from the provided context`;\n\nconst promptText = filePrompt || defaultPrompt;\nconst contextText = norm(j.contextText);\n\nconst geminiPrompt = norm(`\n# PROMPT\n${promptText}\n\n# MEETING METADATA\nSubject: ${subject}\nStart (UTC): ${startUtc || '[unknown]'}\nEnd (UTC): ${endUtc || '[unknown]'}\nCategories: ${categories || '[none]'}\nAttendees: ${attendees || '[unknown]'}\n\n# CONTEXT\n${contextText || '[none provided]'}\n`);\n\nreturn { json: { ...j, geminiPrompt } };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3136, -952],
+      "id": "f8a7a714-74df-4903-9000-4a135b740b61",
+      "name": "Build Gemini Prompt"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item;\nconst j = item.json ?? {};\n\nconst fail = (msg) => {\n  const diag = {\n    hasGeminiPrompt: !!j.geminiPrompt,\n    geminiPromptLen: (j.geminiPrompt ? String(j.geminiPrompt).length : 0),\n    hasAudioBase64: !!j.audioBase64,\n    audioBase64Len: (j.audioBase64 ? String(j.audioBase64).length : 0),\n    audioMimeType: j.audioMimeType ?? null,\n    hasPromptText: !!j.promptText,\n    hasContextText: !!j.contextText,\n  };\n  throw new Error(`${msg} | diag=${JSON.stringify(diag)}`);\n};\n\nif (!j || typeof j !== 'object' || Array.isArray(j)) {\n  throw new Error(`Guardrail: expected item.json to be an object, got ${Array.isArray(j) ? 'array' : typeof j}`);\n}\n\nif (!j.geminiPrompt || String(j.geminiPrompt).trim().length < 50) {\n  fail('Guardrail: geminiPrompt missing/too short');\n}\n\nif (!j.audioMimeType || String(j.audioMimeType).trim().length < 3) {\n  fail('Guardrail: audioMimeType missing');\n}\n\nconst mt = String(j.audioMimeType).toLowerCase();\nif (!mt.startsWith('audio/')) {\n  fail(`Guardrail: audioMimeType does not look like audio/* (got \"${j.audioMimeType}\")`);\n}\n\nif (!j.audioBase64 || String(j.audioBase64).trim().length < 5000) {\n  fail('Guardrail: audioBase64 missing/too short (conversion likely failed)');\n}\n\nconst a = String(j.audioBase64).trim().toLowerCase();\nif (a === 'filesystem-v2' || a.startsWith('filesystem-')) {\n  fail('Guardrail: audioBase64 is a filesystem pointer token, not real base64.');\n}\n\nif (!/^[a-z0-9+/=\\s]+$/i.test(String(j.audioBase64).slice(0, 2000))) {\n  fail('Guardrail: audioBase64 contains characters that do not look like base64');\n}\n\nreturn { json: j };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3360, -952],
+      "id": "435726e6-f630-4c46-aaa1-78ea9a68c2f3",
+      "name": "Guardrail"
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $input.item.json ?? {};\n\nconst must = (cond, msg) => { if (!cond) throw new Error(`Build Gemini Request Body: ${msg}`); };\n\nmust(j.geminiPrompt && String(j.geminiPrompt).trim().length > 20, 'geminiPrompt missing/too short');\nmust(j.audioBase64 && String(j.audioBase64).trim().length > 5000, 'audioBase64 missing/too short');\nmust(j.audioMimeType && String(j.audioMimeType).trim().length > 3, 'audioMimeType missing/too short');\n\nconst temperature = 0.2;\n\nconst geminiRequestBody = {\n  contents: [\n    {\n      role: 'user',\n      parts: [\n        { text: String(j.geminiPrompt) },\n        {\n          inlineData: {\n            mimeType: String(j.audioMimeType),\n            data: String(j.audioBase64),\n          },\n        },\n      ],\n    },\n  ],\n  generationConfig: { temperature },\n};\n\nreturn {\n  json: {\n    ...j,\n    geminiRequestBody,\n  },\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3584, -952],
+      "id": "8e6ac264-f5a9-4194-a2d9-d73c55825224",
+      "name": "Build Gemini Request Body"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{}]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.geminiRequestBody }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [3808, -952],
+      "id": "f82a07e0-f2e5-4e77-b2a4-998ca80b6766",
+      "name": "Create Transcript"
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.item.json;\n\nconst text =\n  r?.candidates?.[0]?.content?.parts\n    ?.map(p => p.text ?? '')\n    .join('\\n')\n    .trim();\n\nif (!text) throw new Error('No text found in Gemini response');\n\nreturn [{ json: { ...r, transcript: text } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4032, -952],
+      "id": "2999efa4-698b-452f-8e05-3d932f59ad9a",
+      "name": "Extract Transcript"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Select Project Row').item.json.sharePointSitePath ? 'https://graph.microsoft.com/v1.0/sites/compassrm.sharepoint.com:/' + $('Select Project Row').item.json.sharePointSitePath : 'https://graph.microsoft.com/v1.0/me' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOAuth2Api",
+        "options": {}
+      },
+      "id": "resolve-site",
+      "name": "Resolve SharePoint Site",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [4256, -952],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $('Select Project Row').item.json.sharePointSitePath ? 'https://graph.microsoft.com/v1.0/sites/' + $('Resolve SharePoint Site').item.json.id + '/drive/root:/' + $('Select Project Row').item.json.folderPath + '/' + $('Parse Date').item.json.parsedDate + '_transcript.md:/content' : 'https://graph.microsoft.com/v1.0/me/drive/root:/' + $('Select Project Row').item.json.folderPath + '/' + $('Parse Date').item.json.parsedDate + '_transcript.md:/content' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "text/plain"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "body": "={{ $('Extract Transcript').item.json.transcript }}",
+        "options": {}
+      },
+      "id": "save-md",
+      "name": "Save MD File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [4480, -952]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "move",
+        "path": "={{ $('List a folder').item.json.pathDisplay }}",
+        "toPath": "={{ '/Recordings/JPR/Processed/' + $('List a folder').item.json.name }}"
+      },
+      "id": "move-processed",
+      "name": "Move to Processed",
+      "type": "n8n-nodes-base.dropbox",
+      "typeVersion": 1,
+      "position": [4928, -952]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nif (items.length === 0) return [];\n\nitems.sort((a, b) => {\n  const dateA = new Date(a.json.lastModifiedServer || 0);\n  const dateB = new Date(b.json.lastModifiedServer || 0);\n  return dateB - dateA;\n});\n\nreturn [items[0]];"
+      },
+      "id": "most-recent",
+      "name": "Most Recent File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [448, -976]
+    }
+  ],
+  "connections": {
+    "Find Calendar Match": {
+      "main": [[
+        {"node": "OneDrive - Get projects.csv", "type": "main", "index": 0},
+        {"node": "Merge for Transcript Contextification", "type": "main", "index": 2}
+      ]]
+    },
+    "Download a file": {
+      "main": [[
+        {"node": "Set Recorded At", "type": "main", "index": 0},
+        {"node": "Convert audio binary to base64", "type": "main", "index": 0}
+      ]]
+    },
+    "Schedule Trigger": {
+      "main": [[{"node": "List a folder", "type": "main", "index": 0}]]
+    },
+    "Build Calendar Window": {
+      "main": [[{"node": "Find Calendar Match", "type": "main", "index": 0}]]
+    },
+    "OneDrive - Get projects.csv": {
+      "main": [[{"node": "Extract from File", "type": "main", "index": 0}]]
+    },
+    "Extract from File": {
+      "main": [[{"node": "Select Project Row", "type": "main", "index": 0}]]
+    },
+    "Select Project Row": {
+      "main": [[
+        {"node": "OneDrive get context", "type": "main", "index": 0},
+        {"node": "OneDrive - Get prompt", "type": "main", "index": 0}
+      ]]
+    },
+    "OneDrive - Get prompt": {
+      "main": [[{"node": "Normalize Prompt Text", "type": "main", "index": 0}]]
+    },
+    "Normalize Prompt Text": {
+      "main": [[{"node": "Merge for Transcript Contextification", "type": "main", "index": 0}]]
+    },
+    "OneDrive get context": {
+      "main": [[{"node": "Normalize Context Text", "type": "main", "index": 0}]]
+    },
+    "Normalize Context Text": {
+      "main": [[{"node": "Merge for Transcript Contextification", "type": "main", "index": 1}]]
+    },
+    "Convert audio binary to base64": {
+      "main": [[{"node": "Merge for Transcript Contextification", "type": "main", "index": 3}]]
+    },
+    "Merge for Transcript Contextification": {
+      "main": [[{"node": "Build Gemini Prompt", "type": "main", "index": 0}]]
+    },
+    "Build Gemini Prompt": {
+      "main": [[{"node": "Guardrail", "type": "main", "index": 0}]]
+    },
+    "Guardrail": {
+      "main": [[{"node": "Build Gemini Request Body", "type": "main", "index": 0}]]
+    },
+    "Build Gemini Request Body": {
+      "main": [[{"node": "Create Transcript", "type": "main", "index": 0}]]
+    },
+    "Create Transcript": {
+      "main": [[{"node": "Extract Transcript", "type": "main", "index": 0}]]
+    },
+    "Extract Transcript": {
+      "main": [[{"node": "Resolve SharePoint Site", "type": "main", "index": 0}]]
+    },
+    "Resolve SharePoint Site": {
+      "main": [[{"node": "Save MD File", "type": "main", "index": 0}]]
+    },
+    "Save MD File": {
+      "main": [[{"node": "Notify Graham", "type": "main", "index": 0}]]
+    },
+    "Notify Graham": {
+      "main": [[{"node": "Move to Processed", "type": "main", "index": 0}]]
+    },
+    "Set Recorded At": {
+      "main": [[{"node": "Parse Date", "type": "main", "index": 0}]]
+    },
+    "Parse Date": {
+      "main": [[{"node": "Build Calendar Window", "type": "main", "index": 0}]]
+    },
+    "List a folder": {
+      "main": [[{"node": "Most Recent File", "type": "main", "index": 0}]]
+    },
+    "Most Recent File": {
+      "main": [[{"node": "Download a file", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
