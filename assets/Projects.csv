@@ -1,0 +1,14 @@
+outlookCategory,destinationType,sharePointSitePath,folderPath,contextFilePath,promptFilePath,active,notes
+Clayton,sharepoint,sites/ClaytonandGraham,AiSources/Originals/Transcripts,/n8n flows/Transcripts/contextFiles/Clayton.txt,,,
+Compass,sharepoint,sites/GeneralOfficeManagement,AiSources/Originals/Transcripts,/n8n flows/Transcripts/contextFiles/Compass.txt,,,
+MRRIC,sharepoint,sites/P722-MissouriRiverRICAMP,AiSources/Originals/Transcripts,/n8n flows/Transcripts/contextFiles/MRRIC.txt,,,
+Mt-Lofty,sharepoint,sites/P811-WatertrustAustraliaInitiatives,Working Docs/Mt Lofty/AiSources/Originals/Transcripts,/n8n flows/Transcripts/contextFiles/Mt-Lofty.txt,,,
+Partners,sharepoint,sites/3Partners,AiSources/Originals/Transcripts,/n8n flows/Transcripts/contextFiles/Partners.txt,,,
+UMR,sharepoint,sites/P839-UMRSnowyReviewSAGWUP,AiSources/Originals/Transcripts,/n8n flows/Transcripts/contextFiles/UMR.txt,,,
+Wta Ops,sharepoint,sites/P843-SystemsandGovernanceSupport,AiSources/Originals/Transcripts,/n8n flows/Transcripts/contextFiles/Wta Ops.txt,,,
+Tahiti,sharepoint,sites/P840-SeabirdForestToolkit,AiSources/Originals/Transcripts,/n8n flows/Transcripts/contextFiles/Tahiti.txt,/n8n flows/Transcripts/promptFile/prompt.txt,TRUE,
+__PERSONAL__,onedrive,,n8n flows/Transcripts/Personal_Transcripts_Out,/n8n flows/Transcripts/contextFiles/Personal.txt,/n8n flows/Transcripts/promptFile/prompt.txt,TRUE,Fallback when no project category match
+,,,,,,,
+,,,,,,,
+,,,,,,,
+,,,,,I think we gor rid of this?,,
